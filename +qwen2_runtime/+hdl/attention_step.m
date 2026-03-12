@@ -5,19 +5,26 @@ function [X_out, key_cache_out, value_cache_out] = attention_step(X, key_cache_i
     numHeads = hyperParameters.NumHeads;
     numKVHeads = hyperParameters.NumKVHeads;
     headDim = hyperParameters.HeadDim;
+    useFixedCore = useFixedPointAttentionCore(cfg);
 
     X2 = reshape(X, hiddenSize, []);
     xq = qwen2_runtime.hdl.linear_step(weights.q_proj, X2, cfg);
     xk = qwen2_runtime.hdl.linear_step(weights.k_proj, X2, cfg);
     xv = qwen2_runtime.hdl.linear_step(weights.v_proj, X2, cfg);
 
+    if useFixedCore
+        xq = single(xq);
+        xk = single(xk);
+        xv = single(xv);
+    end
+
     xq = reshape(xq, [headDim, numHeads, seqLen, batchSize]);
     xk = reshape(xk, [headDim, numKVHeads, seqLen, batchSize]);
     xv = reshape(xv, [headDim, numKVHeads, seqLen, batchSize]);
 
-    xq = xq + reshape(weights.q_bias, size(xq));
-    xk = xk + reshape(weights.k_bias, size(xk));
-    xv = xv + reshape(weights.v_bias, size(xv));
+    xq = applyBiasLike(xq, reshape(weights.q_bias, size(xq)));
+    xk = applyBiasLike(xk, reshape(weights.k_bias, size(xk)));
+    xv = applyBiasLike(xv, reshape(weights.v_bias, size(xv)));
 
     [xq, xk] = transformer.layer.RoPE(xq, xk, freqs_cis);
 
@@ -30,16 +37,67 @@ function [X_out, key_cache_out, value_cache_out] = attention_step(X, key_cache_i
     maxCacheLen = size(repeatedKeys, 3);
 
     for b = 1:batchSize
-        for h = 1:numHeads
-            queryVec = xq(:, h, 1, b);
-            attn_output(:, h, 1, b) = streamingAttentionHead(queryVec, repeatedKeys(:, h, :, b), repeatedValues(:, h, :, b), totalLen, maxCacheLen, scale, cfg);
+        if useFixedCore
+            attn_output(:, :, 1, b) = fixedPointAttentionMultihead( ...
+                xq(:, :, 1, b), repeatedKeys(:, :, :, b), repeatedValues(:, :, :, b), totalLen, scale);
+        else
+            for h = 1:numHeads
+                queryVec = xq(:, h, 1, b);
+                attn_output(:, h, 1, b) = streamingAttentionHead(queryVec, repeatedKeys(:, h, :, b), repeatedValues(:, h, :, b), totalLen, maxCacheLen, scale, cfg);
+            end
         end
     end
 
     attn_output_cat = reshape(attn_output, headDim * numHeads, seqLen * batchSize);
     X_out = qwen2_runtime.hdl.linear_step(weights.o_proj, attn_output_cat, cfg);
     X_out = reshape(X_out, hiddenSize, seqLen, batchSize);
-    X_out = X_out + reshape(weights.o_bias, size(X_out));
+    X_out = applyBiasLike(X_out, reshape(weights.o_bias, size(X_out)));
+end
+
+function out = fixedPointAttentionMultihead(query_heads, key_bank, value_bank, totalLen, scale)
+    headDim = size(query_heads, 1);
+    numHeads = size(query_heads, 2);
+    activeLen = min(totalLen, size(key_bank, 3));
+    out = zeros(headDim, numHeads, 'single');
+    if activeLen <= 0
+        return;
+    end
+
+    F = fimath( ...
+        'RoundingMethod', 'Floor', ...
+        'OverflowAction', 'Saturate', ...
+        'ProductMode', 'SpecifyPrecision', ...
+        'ProductWordLength', 24, ...
+        'ProductFractionLength', 14, ...
+        'SumMode', 'SpecifyPrecision', ...
+        'SumWordLength', 32, ...
+        'SumFractionLength', 14);
+
+    score_mat = fi(zeros(activeLen, numHeads), true, 16, 14, F);
+    value_tensor = fi(zeros(activeLen, headDim, numHeads), true, 16, 14, F);
+    scale_fix = fi(scale, true, 16, 14, F);
+    for h = 1:numHeads
+        query_vec = fi(query_heads(:, h), true, 16, 14, F);
+        for t = 1:activeLen
+            key_vec = fi(key_bank(:, h, t), true, 16, 14, F);
+            value_vec = fi(value_bank(:, h, t), true, 16, 14, F);
+            score_mat(t, h) = fi(qwen2_runtime.hdl.attention_score_step(query_vec, key_vec, scale_fix), true, 16, 14, F);
+            value_tensor(t, :, h) = reshape(value_vec, 1, headDim);
+        end
+    end
+
+    max_seed = fi(-8, true, 16, 14, F);
+    sum_seed = fi(0, true, 32, 14, F);
+    totalCycles = activeLen * (3 * headDim * numHeads) + 16;
+    attn_fix = fi(zeros(headDim, numHeads), true, 32, 14, F);
+    for cyc = 1:totalCycles
+        [attn_fix, out_valid] = qwen2_runtime.hdl.attention_multihead_controller_step( ...
+            cyc == 1, score_mat, value_tensor, max_seed, sum_seed);
+        if out_valid
+            break;
+        end
+    end
+    out = single(attn_fix);
 end
 
 function out = streamingAttentionHead(queryVec, keyBank, valueBank, totalLen, maxCacheLen, scale, cfg)
@@ -134,6 +192,28 @@ function y = clampLower(x, lowerBound)
     y = x;
     if y < lowerBound
         y = lowerBound;
+    end
+end
+
+function tf = useFixedPointAttentionCore(cfg)
+    tf = false;
+    if ~isstruct(cfg)
+        return;
+    end
+    if isfield(cfg, 'UseFixedPointHDL')
+        tf = logical(cfg.UseFixedPointHDL);
+        return;
+    end
+    if isfield(cfg, 'HDLNumericMode')
+        tf = isequal(cfg.HDLNumericMode, 'fixed');
+    end
+end
+
+function Y = applyBiasLike(X, bias)
+    if isa(X, 'embedded.fi')
+        Y = X + fi(bias, true, X.WordLength, X.FractionLength, fimath(X));
+    else
+        Y = X + cast(bias, 'like', X);
     end
 end
 
