@@ -53,3 +53,8 @@ Expected result:
 
 - This is a proof baseline for the real block sequence, not yet a hardware-efficient fixed-point or DDR-fed implementation.
 - The next iteration should focus on reducing port pressure, replacing floating-point-heavy kernels, and introducing hardware-oriented streaming and memory interfaces.
+
+## Follow-on hardware subpath
+
+- The first validated hardware-oriented increment now lives in `CURRENT_GATED_MLP_HARDWARE_BASELINE.md`.
+- That path keeps the full-block baseline unchanged, but adds a separate fixed-point gated MLP codegen flow as the first proven hardware submodule.

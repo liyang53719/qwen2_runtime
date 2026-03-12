@@ -2,10 +2,15 @@ function cfg = defaultHDLConfig()
 %DEFAULTHDLCONFIG HDL-oriented configuration with reusable block kernel.
 
     cfg = qwen2_runtime.defaultRuntimeConfig();
+    cfg.HDLNumericMode = 'float';
     cfg.LinearMode = 'float';
     cfg.MlpGateLinearMode = 'float';
     cfg.MlpUpLinearMode = 'float';
     cfg.MlpDownLinearMode = 'float';
+    cfg.HDLLinearInputWordLength = 16;
+    cfg.HDLLinearInputFractionLength = 14;
+    cfg.HDLLinearAccumWordLength = 32;
+    cfg.HDLLinearAccumFractionLength = 14;
     cfg.TailLayerStart = 24;
     cfg.ForceFloatLayers = 24:27;
     cfg.UnrollLayersForRTL = false;
