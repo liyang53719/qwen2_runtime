@@ -34,7 +34,17 @@ function data = getNumeric(data)
 end
 
 function tf = useFixedPointLinear(cfg)
-    tf = ~isempty(cfg) && isstruct(cfg) && isfield(cfg, 'HDLNumericMode') && strcmp(cfg.HDLNumericMode, 'fixed');
+    tf = false;
+    if isempty(cfg) || ~isstruct(cfg)
+        return;
+    end
+    if isfield(cfg, 'UseFixedPointHDL')
+        tf = logical(cfg.UseFixedPointHDL);
+        return;
+    end
+    if isfield(cfg, 'HDLNumericMode')
+        tf = isequal(cfg.HDLNumericMode, 'fixed');
+    end
 end
 
 function Y = fixedLinearMatrix(W_data, X_data, cfg)

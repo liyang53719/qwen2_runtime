@@ -58,7 +58,17 @@ function y = approxSigmoid(x)
 end
 
 function tf = isFixedPointMode(cfg)
-    tf = isstruct(cfg) && isfield(cfg, 'HDLNumericMode') && strcmp(cfg.HDLNumericMode, 'fixed');
+    tf = false;
+    if ~isstruct(cfg)
+        return;
+    end
+    if isfield(cfg, 'UseFixedPointHDL')
+        tf = logical(cfg.UseFixedPointHDL);
+        return;
+    end
+    if isfield(cfg, 'HDLNumericMode')
+        tf = isequal(cfg.HDLNumericMode, 'fixed');
+    end
 end
 
 function y = castLike(value, prototype)

@@ -3,6 +3,7 @@ function cfg = defaultHardwareHDLConfig()
 
     cfg = qwen2_runtime.defaultHDLConfig();
     cfg.HDLNumericMode = 'fixed';
+    cfg.UseFixedPointHDL = true;
     cfg.LinearMode = 'fixed';
     cfg.MlpGateLinearMode = 'fixed';
     cfg.MlpUpLinearMode = 'fixed';

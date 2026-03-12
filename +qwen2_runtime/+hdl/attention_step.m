@@ -7,9 +7,9 @@ function [X_out, key_cache_out, value_cache_out] = attention_step(X, key_cache_i
     headDim = hyperParameters.HeadDim;
 
     X2 = reshape(X, hiddenSize, []);
-    xq = qwen2_runtime.hdl.linear_step(weights.q_proj, X2);
-    xk = qwen2_runtime.hdl.linear_step(weights.k_proj, X2);
-    xv = qwen2_runtime.hdl.linear_step(weights.v_proj, X2);
+    xq = qwen2_runtime.hdl.linear_step(weights.q_proj, X2, cfg);
+    xk = qwen2_runtime.hdl.linear_step(weights.k_proj, X2, cfg);
+    xv = qwen2_runtime.hdl.linear_step(weights.v_proj, X2, cfg);
 
     xq = reshape(xq, [headDim, numHeads, seqLen, batchSize]);
     xk = reshape(xk, [headDim, numKVHeads, seqLen, batchSize]);
@@ -37,7 +37,7 @@ function [X_out, key_cache_out, value_cache_out] = attention_step(X, key_cache_i
     end
 
     attn_output_cat = reshape(attn_output, headDim * numHeads, seqLen * batchSize);
-    X_out = qwen2_runtime.hdl.linear_step(weights.o_proj, attn_output_cat);
+    X_out = qwen2_runtime.hdl.linear_step(weights.o_proj, attn_output_cat, cfg);
     X_out = reshape(X_out, hiddenSize, seqLen, batchSize);
     X_out = X_out + reshape(weights.o_bias, size(X_out));
 end

@@ -58,3 +58,5 @@ Expected result:
 
 - The first validated hardware-oriented increment now lives in `CURRENT_GATED_MLP_HARDWARE_BASELINE.md`.
 - That path keeps the full-block baseline unchanged, but adds a separate fixed-point gated MLP codegen flow as the first proven hardware submodule.
+- The next validated fixed-point increments now live in `CURRENT_FIXED_POINT_SUBPATHS.md`.
+- Those paths add standalone RMSNorm and post-attention block-tail baselines, while keeping the full-block float proof baseline reproducible.
