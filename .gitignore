@@ -1,0 +1,16 @@
+*.asv
+gpt2-355M
+.venv/
+.ruff_cache/
+.vscode/
+artifacts/
+codegen/
+hdl_prj/
+slprj/
+verdiLog/
+fresh_simv.log
+novas.conf
+novas.rc
+ucli.key
+*.fsdb
+*.log
