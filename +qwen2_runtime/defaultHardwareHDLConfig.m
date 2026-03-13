@@ -13,4 +13,6 @@ function cfg = defaultHardwareHDLConfig()
     cfg.UseExternalWeightMemory = true;
     cfg.UseExternalKVMemory = true;
     cfg.SystemAttentionKernel = 'qwen2_runtime.hdl.attention_token_step_sram_step';
+    cfg.SystemKVInterfaceKernel = 'qwen2_runtime.hdl.attention_token_step_sram_contract_step';
+    cfg.SystemAttentionControllerKernel = 'qwen2_runtime.hdl.attention_token_controller_sram_step';
 end

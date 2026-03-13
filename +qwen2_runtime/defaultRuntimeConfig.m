@@ -41,5 +41,7 @@ function cfg = defaultRuntimeConfig()
     cfg.UseExternalWeightMemory = false;
     cfg.UseExternalKVMemory = false;
     cfg.SystemAttentionKernel = '';
+    cfg.SystemKVInterfaceKernel = '';
+    cfg.SystemAttentionControllerKernel = '';
     cfg.TraceTensors = false;
 end
