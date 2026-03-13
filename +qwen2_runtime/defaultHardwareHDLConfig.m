@@ -8,5 +8,9 @@ function cfg = defaultHardwareHDLConfig()
     cfg.MlpGateLinearMode = 'fixed';
     cfg.MlpUpLinearMode = 'fixed';
     cfg.MlpDownLinearMode = 'fixed';
+    cfg.BlockKernel = 'qwen2_runtime.hdl.block_entry';
     cfg.ForceFloatLayers = -1;
+    cfg.UseExternalWeightMemory = true;
+    cfg.UseExternalKVMemory = true;
+    cfg.SystemAttentionKernel = 'qwen2_runtime.hdl.attention_token_step_sram_step';
 end

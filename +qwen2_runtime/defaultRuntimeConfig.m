@@ -36,5 +36,10 @@ function cfg = defaultRuntimeConfig()
     cfg.SoftmaxOutlierThreshold = single(32);
     cfg.ResidualFloatThreshold = single(64);
     cfg.ForceFloatLayers = [-1];
+    cfg.BlockKernel = 'qwen2_runtime.layer.block';
+    cfg.HDLMaxCacheLength = 256;
+    cfg.UseExternalWeightMemory = false;
+    cfg.UseExternalKVMemory = false;
+    cfg.SystemAttentionKernel = '';
     cfg.TraceTensors = false;
 end
