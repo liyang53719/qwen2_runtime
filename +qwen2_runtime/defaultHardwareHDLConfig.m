@@ -15,4 +15,6 @@ function cfg = defaultHardwareHDLConfig()
     cfg.SystemAttentionKernel = 'qwen2_runtime.hdl.attention_token_step_sram_step';
     cfg.SystemKVInterfaceKernel = 'qwen2_runtime.hdl.attention_token_step_sram_contract_step';
     cfg.SystemAttentionControllerKernel = 'qwen2_runtime.hdl.attention_token_controller_sram_step';
+    cfg.SystemAttentionHandshakeKernel = 'qwen2_runtime.hdl.attention_token_controller_sram_handshake_step';
+    cfg.SystemBlockKernel = 'qwen2_runtime.hdl.block0_token_system_step';
 end

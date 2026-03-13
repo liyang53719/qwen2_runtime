@@ -43,5 +43,7 @@ function cfg = defaultRuntimeConfig()
     cfg.SystemAttentionKernel = '';
     cfg.SystemKVInterfaceKernel = '';
     cfg.SystemAttentionControllerKernel = '';
+    cfg.SystemAttentionHandshakeKernel = '';
+    cfg.SystemBlockKernel = '';
     cfg.TraceTensors = false;
 end
