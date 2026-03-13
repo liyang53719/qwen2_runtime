@@ -1,15 +1,15 @@
 function [attn_out, out_valid, busy, read_req, read_addr, write_req, write_addr, shift_enable, write_key_token, write_value_token, next_valid_len] = attention_token_step_sram_handshake_step(start, q_token, k_token, v_token, cache_valid_len, rope_position, read_key_data, read_value_data, read_data_valid, freqs_cis, hyperParameters, cfg)
 %ATTENTION_TOKEN_STEP_SRAM_HANDSHAKE_STEP Multi-cycle external-KV SRAM handshake top.
 
-    headDim = hyperParameters.HeadDim;
-    numHeads = hyperParameters.NumHeads;
-    numKVHeads = hyperParameters.NumKVHeads;
-    maxCacheLen = resolveMaxCacheLen(cfg, cache_valid_len, freqs_cis);
+    headDim = 128;
+    numHeads = 12;
+    numKVHeads = 2;
+    maxCacheLen = 256;
 
-    persistent running current_read total_reads q_reg k_reg v_reg rope_reg key_buf value_buf attn_reg valid_reg next_len_reg write_addr_reg shift_reg write_key_reg write_value_reg
-    if isempty(running)
+    persistent phase current_read total_reads q_reg k_reg v_reg rope_reg key_buf value_buf attn_reg valid_reg next_len_reg write_addr_reg shift_reg write_key_reg write_value_reg engine_start_pending
+    if isempty(phase)
         F = attentionFimath(cfg);
-        running = false;
+        phase = uint8(0);
         current_read = uint16(1);
         total_reads = uint16(0);
         q_reg = fi(zeros(headDim, numHeads), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
@@ -25,11 +25,12 @@ function [attn_out, out_valid, busy, read_req, read_addr, write_req, write_addr,
         shift_reg = false;
         write_key_reg = fi(zeros(headDim, numKVHeads), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
         write_value_reg = fi(zeros(headDim, numKVHeads), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
+        engine_start_pending = false;
     end
 
     attn_out = attn_reg;
     out_valid = valid_reg;
-    busy = running;
+    busy = (phase ~= uint8(0));
     read_req = false;
     read_addr = current_read;
     write_req = false;
@@ -55,20 +56,16 @@ function [attn_out, out_valid, busy, read_req, read_addr, write_req, write_addr,
         else
             write_addr_reg = uint16(double(cache_valid_len) + 1);
         end
-        [~, k_rot] = fixedPointRoPESinglePos(q_reg, k_reg, rope_reg, freqs_cis, cfg);
+        [~, k_rot] = qwen2_runtime.hdl.attention_rope_single_token_step(q_reg, k_reg, rope_reg, freqs_cis, cfg);
         write_key_reg = reshape(projectedTokenLike(k_rot, cfg), [headDim, numKVHeads]);
         write_value_reg = reshape(projectedTokenLike(v_reg, cfg), [headDim, numKVHeads]);
 
         if total_reads == uint16(0)
-            [attn_reg, next_len_reg] = computeAttention(q_reg, k_reg, v_reg, key_buf, value_buf, uint16(0), rope_reg, freqs_cis, hyperParameters, cfg);
-            attn_out = attn_reg;
-            next_valid_len = next_len_reg;
-            out_valid = true;
-            write_req = true;
-            busy = false;
-            running = false;
+            phase = uint8(2);
+            engine_start_pending = true;
+            busy = true;
         else
-            running = true;
+            phase = uint8(1);
             busy = true;
             read_req = true;
             read_addr = current_read;
@@ -80,41 +77,38 @@ function [attn_out, out_valid, busy, read_req, read_addr, write_req, write_addr,
         return;
     end
 
-    if ~running
-        return;
-    end
-
-    read_req = true;
-    read_addr = current_read;
-    busy = true;
-    write_addr = write_addr_reg;
-    shift_enable = shift_reg;
-    write_key_token = write_key_reg;
-    write_value_token = write_value_reg;
-
-    if read_data_valid
-        key_buf(:, :, double(current_read), 1) = reshape(read_key_data, [headDim, numKVHeads]);
-        value_buf(:, :, double(current_read), 1) = reshape(read_value_data, [headDim, numKVHeads]);
-        if current_read >= total_reads
-            [attn_reg, next_len_reg] = computeAttention(q_reg, k_reg, v_reg, key_buf, value_buf, total_reads, rope_reg, freqs_cis, hyperParameters, cfg);
-            attn_out = attn_reg;
-            next_valid_len = next_len_reg;
-            out_valid = true;
-            write_req = true;
-            busy = false;
-            running = false;
-            valid_reg = false;
-            read_req = false;
-        else
-            current_read = current_read + uint16(1);
-            read_addr = current_read;
+    if phase == uint8(1)
+        read_req = true;
+        read_addr = current_read;
+        busy = true;
+        if read_data_valid
+            key_buf(:, :, double(current_read), 1) = reshape(read_key_data, [headDim, numKVHeads]);
+            value_buf(:, :, double(current_read), 1) = reshape(read_value_data, [headDim, numKVHeads]);
+            if current_read >= total_reads
+                phase = uint8(2);
+                engine_start_pending = true;
+                read_req = false;
+            else
+                current_read = current_read + uint16(1);
+                read_addr = current_read;
+            end
         end
     end
-end
 
-function [attn_out, next_valid_len] = computeAttention(q_token, k_token, v_token, key_cache_in, value_cache_in, cache_valid_len, rope_position, freqs_cis, hyperParameters, cfg)
-    [attn_out, ~, ~, next_valid_len] = qwen2_runtime.hdl.attention_token_step_sram_step( ...
-        q_token, k_token, v_token, key_cache_in, value_cache_in, cache_valid_len, rope_position, freqs_cis, hyperParameters, cfg);
+    if phase == uint8(2)
+        [attn_reg, engine_valid, engine_busy, next_len_reg] = qwen2_runtime.hdl.attention_token_step_sram_engine_step( ...
+            engine_start_pending, q_reg, k_reg, v_reg, key_buf, value_buf, total_reads, rope_reg, freqs_cis, hyperParameters, cfg);
+        engine_start_pending = false;
+        attn_out = attn_reg;
+        next_valid_len = next_len_reg;
+        busy = engine_busy;
+        if engine_valid
+            out_valid = true;
+            write_req = true;
+            phase = uint8(0);
+            busy = false;
+        end
+    end
 end
 
 function token = projectedTokenLike(tokenIn, cfg)
@@ -122,38 +116,6 @@ function token = projectedTokenLike(tokenIn, cfg)
     token = fi(tokenIn, true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
 end
 
-function [xq_rot, xk_rot] = fixedPointRoPESinglePos(xq, xk, rope_position, freqs_cis, cfg)
-    half = size(xq, 1) / 2;
-    F = attentionFimath(cfg);
-    pos = double(rope_position);
-    cosTheta = fi(reshape(freqs_cis.Cos(:, pos), [half, 1]), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    sinTheta = fi(reshape(freqs_cis.Sin(:, pos), [half, 1]), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    xq_rot = rotateTokenPair(xq, cosTheta, sinTheta, F, cfg);
-    xk_rot = rotateTokenPair(xk, cosTheta, sinTheta, F, cfg);
-end
-
-function x_rot = rotateTokenPair(x, cosTheta, sinTheta, F, cfg)
-    half = size(x, 1) / 2;
-    headCount = size(x, 2);
-    x_rot = fi(zeros(size(x)), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    for h = 1:headCount
-        realPart = fi(x(1:half, h), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-        imagPart = fi(x(half+1:end, h), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-        x_rot(1:half, h) = fi(realPart .* cosTheta - imagPart .* sinTheta, true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-        x_rot(half+1:end, h) = fi(realPart .* sinTheta + imagPart .* cosTheta, true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    end
-end
-
 function F = attentionFimath(cfg)
     F = fimath('RoundingMethod', 'Floor', 'OverflowAction', 'Saturate', 'ProductMode', 'SpecifyPrecision', 'ProductWordLength', 24, 'ProductFractionLength', cfg.HDLLinearAccumFractionLength, 'SumMode', 'SpecifyPrecision', 'SumWordLength', cfg.HDLLinearAccumWordLength, 'SumFractionLength', cfg.HDLLinearAccumFractionLength);
-end
-
-function maxCacheLen = resolveMaxCacheLen(cfg, cache_valid_len, freqs_cis)
-    maxCacheLen = max(double(cache_valid_len) + 1, 1);
-    if isstruct(cfg) && isfield(cfg, 'HDLMaxCacheLength')
-        maxCacheLen = max(maxCacheLen, double(cfg.HDLMaxCacheLength));
-    end
-    if isstruct(freqs_cis) && isfield(freqs_cis, 'Cos')
-        maxCacheLen = min(maxCacheLen, size(freqs_cis.Cos, 2));
-    end
 end

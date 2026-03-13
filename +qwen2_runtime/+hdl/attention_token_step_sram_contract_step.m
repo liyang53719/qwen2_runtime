@@ -21,7 +21,7 @@ function [attn_out, key_cache_out, value_cache_out, next_valid_len, read_enable,
         write_addr = uint16(double(cache_valid_len) + 1);
     end
 
-    [~, k_rot] = fixedPointRoPESinglePos(q_token, k_token, rope_position, freqs_cis, cfg);
+    [~, k_rot] = qwen2_runtime.hdl.attention_rope_single_token_step(q_token, k_token, rope_position, freqs_cis, cfg);
     write_key_token = reshape(projectedTokenLike(k_rot, cfg), [headDim, numKVHeads]);
     write_value_token = reshape(projectedTokenLike(v_token, cfg), [headDim, numKVHeads]);
 
@@ -32,33 +32,6 @@ end
 function token = projectedTokenLike(tokenIn, cfg)
     F = attentionFimath(cfg);
     token = fi(tokenIn, true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-end
-
-function [xq_rot, xk_rot] = fixedPointRoPESinglePos(xq, xk, rope_position, freqs_cis, cfg)
-    half = size(xq, 1) / 2;
-    if mod(size(xq, 1), 2) ~= 0
-        error('RoPE:InvalidHeadDim', 'headDim must be even.');
-    end
-
-    F = attentionFimath(cfg);
-    pos = double(rope_position);
-    cosTheta = fi(reshape(freqs_cis.Cos(:, pos), [half, 1]), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    sinTheta = fi(reshape(freqs_cis.Sin(:, pos), [half, 1]), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-
-    xq_rot = rotateTokenPair(xq, cosTheta, sinTheta, F, cfg);
-    xk_rot = rotateTokenPair(xk, cosTheta, sinTheta, F, cfg);
-end
-
-function x_rot = rotateTokenPair(x, cosTheta, sinTheta, F, cfg)
-    half = size(x, 1) / 2;
-    headCount = size(x, 2);
-    x_rot = fi(zeros(size(x)), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    for h = 1:headCount
-        realPart = fi(x(1:half, h), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-        imagPart = fi(x(half+1:end, h), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-        x_rot(1:half, h) = fi(realPart .* cosTheta - imagPart .* sinTheta, true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-        x_rot(half+1:end, h) = fi(realPart .* sinTheta + imagPart .* cosTheta, true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    end
 end
 
 function F = attentionFimath(cfg)
