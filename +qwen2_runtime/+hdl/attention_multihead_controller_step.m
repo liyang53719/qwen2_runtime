@@ -4,17 +4,17 @@ function [attn_out, out_valid] = attention_multihead_controller_step(start, scor
     coder.inline('never');
 
     F = attnFimath();
+    numHeads = uint8(size(score_mat, 2));
+    laneCount = size(value_tensor, 2);
     persistent head_idx running attn_reg valid_reg head_start_pending
     if isempty(head_idx)
         head_idx = uint8(1);
         running = false;
-        attn_reg = fi(zeros(size(value_tensor, 2), size(score_mat, 2)), true, 32, 14, F);
+        attn_reg = fi(zeros(laneCount, double(numHeads)), true, 32, 14, F);
         valid_reg = false;
         head_start_pending = false;
     end
 
-    numHeads = uint8(size(score_mat, 2));
-    laneCount = size(value_tensor, 2);
     attn_out = attn_reg;
     out_valid = valid_reg;
     valid_reg = false;
@@ -22,7 +22,7 @@ function [attn_out, out_valid] = attention_multihead_controller_step(start, scor
     if start
         head_idx = uint8(1);
         running = true;
-        attn_reg = fi(zeros(laneCount, numHeads), true, 32, 14, F);
+        attn_reg = fi(zeros(laneCount, double(numHeads)), true, 32, 14, F);
         head_start_pending = true;
     end
 

@@ -1,9 +1,9 @@
 function [attn_out, key_cache_out, value_cache_out, next_valid_len] = attention_token_step_sram_step(q_token, k_token, v_token, key_cache_in, value_cache_in, cache_valid_len, rope_position, freqs_cis, hyperParameters, cfg)
 %ATTENTION_TOKEN_STEP_SRAM_STEP Token-step attention core with external KV SRAM state.
 
-    headDim = hyperParameters.HeadDim;
-    numHeads = hyperParameters.NumHeads;
-    numKVHeads = hyperParameters.NumKVHeads;
+    headDim = coder.const(double(hyperParameters.HeadDim));
+    numHeads = coder.const(double(hyperParameters.NumHeads));
+    numKVHeads = coder.const(double(hyperParameters.NumKVHeads));
 
     q_token = reshape(projectedTokenLike(q_token, cfg), [headDim, numHeads]);
     k_token = reshape(projectedTokenLike(k_token, cfg), [headDim, numKVHeads]);
@@ -64,7 +64,7 @@ end
 function out = fixedPointAttentionMultihead(query_heads, key_bank, value_bank, totalLen, scale, cfg)
     headDim = size(query_heads, 1);
     numHeads = size(query_heads, 2);
-    maxCacheLen = size(key_bank, 3);
+    maxCacheLen = coder.const(size(key_bank, 3));
     activeLen = min(totalLen, maxCacheLen);
     F = attentionFimath(cfg);
     out = fi(zeros(headDim, numHeads), true, cfg.HDLLinearAccumWordLength, cfg.HDLLinearAccumFractionLength, F);

@@ -4,16 +4,16 @@ function [head_out, out_valid] = attention_head_controller_step(start, score_vec
     coder.inline('never');
 
     F = headFimath();
+    laneCount = uint8(size(value_mat, 2));
     persistent lane_idx running head_reg valid_reg lane_start_pending
     if isempty(lane_idx)
         lane_idx = uint8(1);
         running = false;
-        head_reg = fi(zeros(size(value_mat, 2), 1), true, 32, 14, F);
+        head_reg = fi(zeros(double(laneCount), 1), true, 32, 14, F);
         valid_reg = false;
         lane_start_pending = false;
     end
 
-    laneCount = uint8(size(value_mat, 2));
     head_out = head_reg;
     out_valid = valid_reg;
     valid_reg = false;
@@ -21,7 +21,7 @@ function [head_out, out_valid] = attention_head_controller_step(start, score_vec
     if start
         lane_idx = uint8(1);
         running = true;
-        head_reg = fi(zeros(size(value_mat, 2), 1), true, 32, 14, F);
+        head_reg = fi(zeros(double(laneCount), 1), true, 32, 14, F);
         lane_start_pending = true;
     end
 

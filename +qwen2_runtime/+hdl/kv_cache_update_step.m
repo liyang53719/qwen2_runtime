@@ -13,8 +13,8 @@ function [key_cache_out, value_cache_out, next_valid_len] = kv_cache_update_step
         insertIdx = cache_valid_len + cast(1, 'like', cache_valid_len);
         for d = 1:size(key_cache_in, 1)
             for h = 1:size(key_cache_in, 2)
-                key_cache_out(d, h, double(insertIdx), 1) = key_token(d, h, 1, 1);
-                value_cache_out(d, h, double(insertIdx), 1) = value_token(d, h, 1, 1);
+                key_cache_out(d, h, double(insertIdx), 1) = key_token(d, h);
+                value_cache_out(d, h, double(insertIdx), 1) = value_token(d, h);
             end
         end
         next_valid_len = insertIdx;
@@ -29,8 +29,8 @@ function [key_cache_out, value_cache_out, next_valid_len] = kv_cache_update_step
         end
         for d = 1:size(key_cache_in, 1)
             for h = 1:size(key_cache_in, 2)
-                key_cache_out(d, h, maxLenIndex, 1) = key_token(d, h, 1, 1);
-                value_cache_out(d, h, maxLenIndex, 1) = value_token(d, h, 1, 1);
+                key_cache_out(d, h, maxLenIndex, 1) = key_token(d, h);
+                value_cache_out(d, h, maxLenIndex, 1) = value_token(d, h);
             end
         end
         next_valid_len = maxLen;

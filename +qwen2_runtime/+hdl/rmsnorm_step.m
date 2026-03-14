@@ -157,7 +157,10 @@ function value_fix = toFixedInput(value, wordLength, fractionLength, F)
     if isa(value, 'embedded.fi')
         value_fix = value;
     else
-        value_fix = fi(value, true, wordLength, fractionLength, F);
+        value_fix = fi(zeros(size(value)), true, wordLength, fractionLength, F);
+        for idx = 1:numel(value)
+            value_fix(idx) = fi(value(idx), true, wordLength, fractionLength, F);
+        end
     end
 end
 

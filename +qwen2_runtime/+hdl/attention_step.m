@@ -8,15 +8,13 @@ function [X_out, key_cache_out, value_cache_out] = attention_step(X, key_cache_i
     useFixedCore = useFixedPointAttentionCore(cfg);
 
     X2 = reshape(X, hiddenSize, []);
-    xq = qwen2_runtime.hdl.linear_step(weights.q_proj, X2, cfg);
-    xk = qwen2_runtime.hdl.linear_step(weights.k_proj, X2, cfg);
-    xv = qwen2_runtime.hdl.linear_step(weights.v_proj, X2, cfg);
+    xq_proj = qwen2_runtime.hdl.linear_step(weights.q_proj, X2, cfg);
+    xk_proj = qwen2_runtime.hdl.linear_step(weights.k_proj, X2, cfg);
+    xv_proj = qwen2_runtime.hdl.linear_step(weights.v_proj, X2, cfg);
 
-    if useFixedCore
-        xq = single(xq);
-        xk = single(xk);
-        xv = single(xv);
-    end
+    xq = xq_proj;
+    xk = xk_proj;
+    xv = xv_proj;
 
     xq = reshape(xq, [headDim, numHeads, seqLen, batchSize]);
     xk = reshape(xk, [headDim, numKVHeads, seqLen, batchSize]);
@@ -26,13 +24,22 @@ function [X_out, key_cache_out, value_cache_out] = attention_step(X, key_cache_i
     xk = applyBiasLike(xk, reshape(weights.k_bias, size(xk)));
     xv = applyBiasLike(xv, reshape(weights.v_bias, size(xv)));
 
-    [xq, xk] = transformer.layer.RoPE(xq, xk, freqs_cis);
+    if useFixedCore
+        [xq, xk] = fixedPointRoPE(xq, xk, freqs_cis);
+    else
+        [xq, xk] = transformer.layer.RoPE(xq, xk, freqs_cis);
+    end
 
     [key_cache_out, value_cache_out, totalLen] = updateKVCache(key_cache_in, value_cache_in, cache_valid_len, xk, xv);
     repeatedKeys = repeatKVHeads(key_cache_out, numHeads, numKVHeads);
     repeatedValues = repeatKVHeads(value_cache_out, numHeads, numKVHeads);
 
-    attn_output = zeros(headDim, numHeads, seqLen, batchSize, 'single');
+    if useFixedCore
+        attn_output = fi(zeros(headDim, numHeads, seqLen, batchSize), true, ...
+            cfg.HDLLinearAccumWordLength, cfg.HDLLinearAccumFractionLength, attentionFimath(cfg));
+    else
+        attn_output = zeros(headDim, numHeads, seqLen, batchSize, 'single');
+    end
     scale = headDimScale(headDim, cfg);
     maxCacheLen = size(repeatedKeys, 3);
 
@@ -57,47 +64,85 @@ end
 function out = fixedPointAttentionMultihead(query_heads, key_bank, value_bank, totalLen, scale)
     headDim = size(query_heads, 1);
     numHeads = size(query_heads, 2);
-    activeLen = min(totalLen, size(key_bank, 3));
-    out = zeros(headDim, numHeads, 'single');
+    maxCacheLen = size(key_bank, 3);
+    activeLen = min(totalLen, maxCacheLen);
+    F = localFimath(query_heads);
+    out = fi(zeros(headDim, numHeads), true, 32, 14, F);
     if activeLen <= 0
         return;
     end
 
-    F = fimath( ...
-        'RoundingMethod', 'Floor', ...
-        'OverflowAction', 'Saturate', ...
-        'ProductMode', 'SpecifyPrecision', ...
-        'ProductWordLength', 24, ...
-        'ProductFractionLength', 14, ...
-        'SumMode', 'SpecifyPrecision', ...
-        'SumWordLength', 32, ...
-        'SumFractionLength', 14);
-
-    score_mat = fi(zeros(activeLen, numHeads), true, 16, 14, F);
-    value_tensor = fi(zeros(activeLen, headDim, numHeads), true, 16, 14, F);
+    score_pad = fi(-8, true, 16, 14, F);
+    score_mat = fi(zeros(maxCacheLen, numHeads), true, 16, 14, F);
+    value_tensor = fi(zeros(maxCacheLen, headDim, numHeads), true, 16, 14, F);
+    score_mat(:) = score_pad;
     scale_fix = fi(scale, true, 16, 14, F);
     for h = 1:numHeads
         query_vec = fi(query_heads(:, h), true, 16, 14, F);
-        for t = 1:activeLen
-            key_vec = fi(key_bank(:, h, t), true, 16, 14, F);
-            value_vec = fi(value_bank(:, h, t), true, 16, 14, F);
-            score_mat(t, h) = fi(qwen2_runtime.hdl.attention_score_step(query_vec, key_vec, scale_fix), true, 16, 14, F);
-            value_tensor(t, :, h) = reshape(value_vec, 1, headDim);
+        for t = 1:maxCacheLen
+            if t <= activeLen
+                key_vec = fi(key_bank(:, h, t), true, 16, 14, F);
+                value_vec = fi(value_bank(:, h, t), true, 16, 14, F);
+                score_mat(t, h) = fi(qwen2_runtime.hdl.attention_score_step(query_vec, key_vec, scale_fix), true, 16, 14, F);
+                value_tensor(t, :, h) = reshape(value_vec, 1, headDim);
+            end
         end
     end
 
     max_seed = fi(-8, true, 16, 14, F);
     sum_seed = fi(0, true, 32, 14, F);
-    totalCycles = activeLen * (3 * headDim * numHeads) + 16;
+    totalCycles = maxCacheLen * (3 * headDim * numHeads) + 16;
     attn_fix = fi(zeros(headDim, numHeads), true, 32, 14, F);
+    done = false;
     for cyc = 1:totalCycles
-        [attn_fix, out_valid] = qwen2_runtime.hdl.attention_multihead_controller_step( ...
-            cyc == 1, score_mat, value_tensor, max_seed, sum_seed);
-        if out_valid
-            break;
+        if ~done
+            [attn_candidate, out_valid] = qwen2_runtime.hdl.attention_multihead_controller_step( ...
+                cyc == 1, score_mat, value_tensor, max_seed, sum_seed);
+            if out_valid
+                attn_fix = attn_candidate;
+                done = true;
+            end
         end
     end
-    out = single(attn_fix);
+    out = attn_fix;
+end
+
+function [xq_rot, xk_rot] = fixedPointRoPE(xq, xk, freqs_cis)
+    headDim = size(xq, 1);
+    if mod(headDim, 2) ~= 0
+        error('RoPE:InvalidHeadDim', 'headDim must be even.');
+    end
+
+    half = headDim / 2;
+    seqLen = size(xq, 3);
+    F = localFimath(xq);
+
+    [cosTheta, sinTheta] = unpackRoPETables(freqs_cis, half, seqLen, F, xq.WordLength, xq.FractionLength);
+
+    xq_rot = xq;
+    xk_rot = xk;
+
+    xq_r = xq(1:half, :, :, :);
+    xq_i = xq(half+1:end, :, :, :);
+    xk_r = xk(1:half, :, :, :);
+    xk_i = xk(half+1:end, :, :, :);
+
+    xq_rot(1:half, :, :, :) = fi(xq_r .* cosTheta - xq_i .* sinTheta, true, xq.WordLength, xq.FractionLength, F);
+    xq_rot(half+1:end, :, :, :) = fi(xq_r .* sinTheta + xq_i .* cosTheta, true, xq.WordLength, xq.FractionLength, F);
+
+    xk_rot(1:half, :, :, :) = fi(xk_r .* cosTheta - xk_i .* sinTheta, true, xk.WordLength, xk.FractionLength, F);
+    xk_rot(half+1:end, :, :, :) = fi(xk_r .* sinTheta + xk_i .* cosTheta, true, xk.WordLength, xk.FractionLength, F);
+end
+
+function [cosTheta, sinTheta] = unpackRoPETables(freqs_cis, half, seqLen, F, wordLength, fractionLength)
+    if isstruct(freqs_cis)
+        cosTheta = reshape(freqs_cis.Cos(:, 1:seqLen), [half, 1, seqLen, 1]);
+        sinTheta = reshape(freqs_cis.Sin(:, 1:seqLen), [half, 1, seqLen, 1]);
+        return;
+    end
+
+    cosTheta = fi(reshape(real(freqs_cis(:, 1:seqLen)), [half, 1, seqLen, 1]), true, wordLength, fractionLength, F);
+    sinTheta = fi(reshape(imag(freqs_cis(:, 1:seqLen)), [half, 1, seqLen, 1]), true, wordLength, fractionLength, F);
 end
 
 function out = streamingAttentionHead(queryVec, keyBank, valueBank, totalLen, maxCacheLen, scale, cfg)
@@ -206,6 +251,34 @@ function tf = useFixedPointAttentionCore(cfg)
     end
     if isfield(cfg, 'HDLNumericMode')
         tf = isequal(cfg.HDLNumericMode, 'fixed');
+    end
+end
+
+function F = attentionFimath(cfg)
+    F = fimath( ...
+        'RoundingMethod', 'Floor', ...
+        'OverflowAction', 'Saturate', ...
+        'ProductMode', 'SpecifyPrecision', ...
+        'ProductWordLength', 24, ...
+        'ProductFractionLength', cfg.HDLLinearAccumFractionLength, ...
+        'SumMode', 'SpecifyPrecision', ...
+        'SumWordLength', cfg.HDLLinearAccumWordLength, ...
+        'SumFractionLength', cfg.HDLLinearAccumFractionLength);
+end
+
+function F = localFimath(value)
+    if isa(value, 'embedded.fi')
+        F = fimath(value);
+    else
+        F = fimath( ...
+            'RoundingMethod', 'Floor', ...
+            'OverflowAction', 'Saturate', ...
+            'ProductMode', 'SpecifyPrecision', ...
+            'ProductWordLength', 24, ...
+            'ProductFractionLength', 14, ...
+            'SumMode', 'SpecifyPrecision', ...
+            'SumWordLength', 32, ...
+            'SumFractionLength', 14);
     end
 end
 
