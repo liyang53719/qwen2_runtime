@@ -4,8 +4,8 @@ function [xq_rot, xk_rot] = attention_rope_single_token_step(xq, xk, rope_positi
     half = size(xq, 1) / 2;
     F = localFimath(cfg);
     pos = double(rope_position);
-    cosTheta = fi(freqs_cis.Cos(:, pos), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
-    sinTheta = fi(freqs_cis.Sin(:, pos), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
+    cosTheta = fi(reshape(freqs_cis.Cos(:, pos), [half, 1]), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
+    sinTheta = fi(reshape(freqs_cis.Sin(:, pos), [half, 1]), true, cfg.HDLLinearInputWordLength, cfg.HDLLinearInputFractionLength, F);
     xq_rot = rotateTokenPair(xq, cosTheta, sinTheta, F, cfg);
     xk_rot = rotateTokenPair(xk, cosTheta, sinTheta, F, cfg);
 end

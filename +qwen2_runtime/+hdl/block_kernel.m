@@ -36,7 +36,5 @@ function value = getNumeric(value)
     if isa(value, 'dlarray')
         value = extractdata(value);
     end
-    if ~isa(value, 'embedded.fi')
-        value = single(value);
-    end
+    value = single(value);
 end

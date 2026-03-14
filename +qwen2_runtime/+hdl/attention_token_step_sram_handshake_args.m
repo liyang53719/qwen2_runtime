@@ -2,7 +2,7 @@ function args = attention_token_step_sram_handshake_args(maxCacheLen, forCodegen
 %ATTENTION_TOKEN_STEP_SRAM_HANDSHAKE_ARGS Representative args for handshake attention top.
 
     if nargin == 0
-        maxCacheLen = qwen2_runtime.defaultHardwareHDLConfig().HDLMaxCacheLength;
+        maxCacheLen = 8;
     end
     if nargin < 2
         forCodegen = false;

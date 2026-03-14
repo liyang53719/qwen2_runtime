@@ -2,14 +2,13 @@ function args = attention_token_step_sram_args(maxCacheLen, forCodegen)
 %ATTENTION_TOKEN_STEP_SRAM_ARGS Representative real-head-dimension args for token-step attention SRAM top.
 
     if nargin == 0
-        maxCacheLen = qwen2_runtime.defaultHardwareHDLConfig().HDLMaxCacheLength;
+        maxCacheLen = 8;
     end
     if nargin < 2
         forCodegen = false;
     end
 
     runtimeCfg = qwen2_runtime.defaultHardwareHDLConfig();
-    runtimeCfg.HDLMaxCacheLength = maxCacheLen;
     F = attentionFimath(runtimeCfg);
     headDim = 128;
     numHeads = 12;
